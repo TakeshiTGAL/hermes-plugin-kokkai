@@ -1,10 +1,12 @@
 ---
 name: read-meetings
-description: List Diet meetings from the National Diet Library and quote them only with the tool's source fields.
+description: List Diet meetings from the National Diet Library. Quote a searched meeting with that meeting's meetingURL and the search source fields. kokkai_watch does not return source.
 ---
 
-条文や発言を伝えるときは、この欄を一緒に伝える。道具を呼んでいないときは、取得していないと言う。記憶から条文を書かない。
+When you mention a meeting from `kokkai_search`, copy that meeting's `meetingURL` from `meetings`, plus `source.retrieved_at`, `source.as_of`, and `source.attribution`. `source.url` is only the first meeting URL, or `https://kokkai.ndl.go.jp/api.html` when the page has no meeting URL. Do not use `source.url` as the URL of every meeting.
 
-When you mention a meeting, a count, or a speaker, copy `source.attribution`, `source.retrieved_at`, `source.url`, and `source.as_of` into the reply. This plugin does not return speech text. If you did not call `kokkai_search` or `kokkai_watch`, say you did not fetch the meetings. Do not quote a speech from memory.
+`kokkai_watch` does not return `source`. `list` and `remove` do not fetch meetings. Do not invent `retrieved_at` or a URL for them. When a fetch happened, the credit line is inside `message`.
+
+This plugin does not return speech text. If you did not call `kokkai_search` or `kokkai_watch`, say you did not fetch the meetings. Do not quote a speech from memory.
 
 `from` and `until` are a pair of `YYYY-MM-DD` dates. `house` is 衆議院, 参議院, 両院, or 両院協議会. `maximum_records` is an integer from 1 to 30.

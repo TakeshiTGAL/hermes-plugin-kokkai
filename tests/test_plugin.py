@@ -307,6 +307,12 @@ def test_query_over_2000_bytes_is_not_sent(tmp_path):
     transport = Transport([])
     result = body(service.search(make_deps(tmp_path, transport), {"any": "あ" * 2000}))
     assert result["ok"] is False
+    assert result["error"] == "bad_args"
+    assert result["field"] == "arguments"
+    assert result["problem"] == "too_long"
+    assert result["expected"] == "at most 2000 bytes"
+    assert result["allowed_fields"] == service.SEARCH_FIELDS
+    assert "あ" not in json.dumps(result, ensure_ascii=False)
     assert transport.calls == []
 
 
@@ -1310,3 +1316,106 @@ def test_run_ceiling_counts_gaps_after_timeouts(tmp_path):
         assert ceiling == 100
     finally:
         client.set_clock(time.monotonic)
+
+
+def test_search_source_url_is_the_first_meeting_only(tmp_path):
+    first = "https://kokkai.ndl.go.jp/txt/first"
+    second = "https://kokkai.ndl.go.jp/txt/second"
+    transport = Transport([(200, page(2, [meeting("a", first), meeting("b", second)]))])
+    result = body(service.search(make_deps(tmp_path, transport), {"any": "科学技術"}))
+    assert result["ok"] is True
+    assert result["source"]["url"] == first
+    assert result["source"]["as_of"] == "2026-10-08"
+    assert result["source"]["retrieved_at"].endswith("Z")
+    assert result["meetings"][0]["meetingURL"] == first
+    assert result["meetings"][1]["meetingURL"] == second
+    assert second in result["source"]["attribution"]
+    assert second not in result["source"]["url"]
+
+
+def test_add_refusal_fields_match_add_arguments(tmp_path):
+    deps = make_deps(tmp_path, Transport([]))
+    extra = body(service.watch(deps, {
+        "action": "add", "any": "科学技術", "hour": 9, "deliver": "local", "watch_id": "a" * 32,
+    }))
+    assert extra["ok"] is False
+    assert extra["field"] == "arguments"
+    assert extra["problem"] == "unknown_field"
+    assert extra["allowed_fields"] == service.ADD_FIELDS
+    assert set(extra["allowed_fields"]) == service.ADD_KEYS
+    assert "watch_id" not in extra["allowed_fields"]
+    assert "a" * 32 not in json.dumps(extra, ensure_ascii=False)
+    missing = body(service.watch(deps, {"action": "add", "any": "科学技術", "deliver": "local"}))
+    assert missing["field"] == "hour"
+    assert missing["problem"] == "missing"
+    assert missing["allowed_fields"] == service.ADD_FIELDS
+    speaker = body(service.watch(deps, {
+        "action": "add", "any": "科学技術", "speaker": 7, "hour": 9, "deliver": "local",
+    }))
+    assert speaker["field"] == "speaker"
+    assert speaker["problem"] == "not_a_string"
+    assert speaker["allowed_fields"] == service.ADD_FIELDS
+    ranged = body(service.watch(deps, {
+        "action": "add", "any": "科学技術", "hour": 24, "deliver": "local",
+    }))
+    assert ranged["field"] == "hour"
+    assert ranged["problem"] == "out_of_range"
+    assert deps.transport.calls == []
+
+
+def test_list_and_idle_run_do_not_return_source(tmp_path):
+    deps = make_deps(tmp_path, Transport([]))
+    listed = body(service.watch(deps, {"action": "list"}))
+    ran = body(service.watch(deps, {"action": "run"}))
+    assert listed["ok"] is True and ran["ok"] is True
+    assert "source" not in listed and "source" not in ran
+    assert deps.transport.calls == []
+
+
+def test_public_text_matches_what_the_tools_return():
+    root = Path(__file__).resolve().parents[1]
+    init = (root / "__init__.py").read_text(encoding="utf-8")
+    skill = (root / "skills" / "read-meetings" / "SKILL.md").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+    changelog = (root / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert "does not return source" in init
+    assert "read-only except add and remove" not in init
+    assert "state.json" in init
+    assert "source.url is only the first meeting URL" in init
+    assert "条文" not in skill
+    assert "does not return `source`" in skill
+    assert "meetingURL" in skill
+    assert "ship/" not in readme
+    assert "記憶から発言を書きません" not in readme
+    assert "56/198" in readme
+    assert "omitted_credit" in readme
+    assert "Python 3.11 and 3.14 were not part of this check" in readme
+    assert "本番用の家" not in changelog
+    assert "omitted_attribution" not in changelog
+    assert "56/198" in changelog and "56/203" in changelog
+    assert "does not return `source`" in changelog
+
+
+def test_hermes_entry_registers_skill_and_refusals(tmp_path):
+    import subprocess
+    script = Path(__file__).resolve().parent / "entry_check.py"
+    plugin = str(Path(__file__).resolve().parents[1])
+    harness = Path.home() / "takeshitgal" / ".harness"
+    pairs = [
+        ("v0.21.4", harness / "venv" / "v0214" / "bin" / "python", harness / "src" / "v0214"),
+        ("main", harness / "venv" / "main" / "bin" / "python", harness / "src" / "main"),
+    ]
+    for label, python, source in pairs:
+        assert python.is_file(), label
+        assert source.is_dir(), label
+        home = tmp_path / label
+        home.mkdir()
+        done = subprocess.run(
+            [str(python), str(script), str(home), plugin, str(source)],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            env={"PYTHONDONTWRITEBYTECODE": "1", "HOME": str(home), "TMPDIR": str(home)},
+        )
+        assert done.returncode == 0, label + "\n" + done.stdout + "\n" + done.stderr
+        assert done.stdout.strip() == "ok"

@@ -42,12 +42,16 @@ CRON_PROMPT = (
 )
 SEARCH_KEYS = {"any", "speaker", "house", "from", "until", "maximum_records"}
 SEARCH_FIELDS = ["any", "speaker", "house", "from", "until", "maximum_records"]
-ADD_KEYS = {"action", "any", "speaker", "house", "hour", "deliver", "lookback_days"}
+ADD_FIELDS = ["action", "any", "speaker", "house", "hour", "deliver", "lookback_days"]
+ADD_KEYS = set(ADD_FIELDS)
 WATCH_FIELDS = ["action", "any", "speaker", "house", "hour", "deliver", "lookback_days", "watch_id"]
 _ADD_PROBLEM = {
     "any": ("any", "not_a_string", "any, speaker, and house are strings"),
+    "speaker": ("speaker", "not_a_string", "any, speaker, and house are strings"),
+    "house_type": ("house", "not_a_string", "any, speaker, and house are strings"),
     "criteria": ("any", "missing_criteria", "any or speaker"),
     "house": ("house", "not_in_set", "衆議院, 参議院, 両院, or 両院協議会"),
+    "hour_missing": ("hour", "missing", "an integer from 0 through 23"),
     "hour": ("hour", "out_of_range", "an integer from 0 through 23"),
     "deliver": ("deliver", "missing", "a deliver target"),
     "lookback_days": ("lookback_days", "out_of_range", "an integer from 1 to 30"),
@@ -100,7 +104,7 @@ def dumps(body: dict[str, Any], *, ordered: bool = False) -> str:
 
 
 def _bad_args(field: str, problem: str, expected: str, allowed: list[str], next_step: str, *, notify: bool = False) -> str:
-    """断る値は表の field / problem / expected / allowed_fields。入力の値と上流の文は載せない。"""
+    """Return field, problem, expected, and allowed_fields. Omit the caller's value and upstream text."""
     return _fail(
         "bad_args",
         f"{field} is not accepted ({problem}). Expected: {expected}.",
@@ -351,11 +355,9 @@ def search(deps: Deps, args: dict[str, Any] | None) -> str:
         )
     pairs, _meta = built
     if _query_too_long(pairs):
-        return _fail(
-            "bad_args",
-            "The query is longer than 2000 bytes, so it was not sent.",
-            "Shorten the words and try again.",
-            notify=False,
+        return _bad_args(
+            "arguments", "too_long", "at most 2000 bytes",
+            SEARCH_FIELDS, "Shorten the words and try again.",
         )
     try:
         page = client.fetch(pairs, deps.transport)
@@ -636,14 +638,14 @@ def _add(deps: Deps, args: dict[str, Any]) -> str:
     if unknown:
         return _bad_args(
             "arguments", "unknown_field", "action, any, speaker, house, hour, deliver, lookback_days",
-            WATCH_FIELDS, "Remove the extra arguments. Nothing was saved.", notify=True,
+            ADD_FIELDS, "Remove the extra arguments. Nothing was saved.", notify=True,
         )
     parsed = _add_fields(args)
     if isinstance(parsed, str):
         field, problem, expected = _ADD_PROBLEM[parsed]
         return _bad_args(
             field, problem, expected,
-            WATCH_FIELDS, "Fix the arguments. Nothing was saved.", notify=True,
+            ADD_FIELDS, "Fix the arguments. Nothing was saved.", notify=True,
         )
     status, state, path = _load_state(deps)
     if status == "corrupt":
@@ -667,7 +669,7 @@ def _add(deps: Deps, args: dict[str, Any]) -> str:
             field="deliver",
             problem="not_in_set",
             expected="origin, local, all, bot-chat, bot-chat:<profile>, a platform, platform:chat_id, or a comma combination",
-            allowed_fields=WATCH_FIELDS,
+            allowed_fields=ADD_FIELDS,
         )
     parsed["deliver"] = deliver
     match = next((row for row in state["watches"] if _condition(row) == _condition(parsed)), None)
@@ -710,7 +712,7 @@ def _add(deps: Deps, args: dict[str, Any]) -> str:
     if _query_too_long(pairs):
         return _bad_args(
             "query", "too_long", "at most 2000 bytes",
-            WATCH_FIELDS, "Shorten the words. Nothing was sent.", notify=True,
+            ADD_FIELDS, "Shorten the words. Nothing was sent.", notify=True,
         )
     try:
         page = client.fetch(pairs, deps.transport)
@@ -802,15 +804,18 @@ def _add_fields(args: dict[str, Any]) -> dict[str, Any] | str:
     any_text = _text(args.get("any", ""))
     speaker = _text(args.get("speaker", ""))
     house = _text(args.get("house", ""))
-    if None in {any_text, speaker, house}:
+    if any_text is None:
         return "any"
-    assert any_text is not None and speaker is not None and house is not None
+    if speaker is None:
+        return "speaker"
+    if house is None:
+        return "house_type"
     if any_text == "" and speaker == "":
         return "criteria"
     if house != "" and _house(house) is None:
         return "house"
     if "hour" not in args:
-        return "hour"
+        return "hour_missing"
     hour = _int(args.get("hour"))
     if hour is None or not 0 <= hour <= 23:
         return "hour"

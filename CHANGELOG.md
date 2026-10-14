@@ -2,18 +2,18 @@
 
 ## 0.1.0
 
-国会会議録検索システムの API から、会議の一覧（メタデータと公式の会議 URL）を読む。`kokkai_watch` は1日1回の仕事を1つ作る。発言の本文は取らない。
+Reads a meeting list (metadata and the official meeting URL) from the Diet proceedings search API. `kokkai_watch` creates one job that runs once a day. Speech text is not requested.
 
 ## 0.1.1
 
-本物のモデル 5 個（stepfun/step-5-preview:free、upstage/solar-mini4:free、meituan/longcat-2.5-preview:free、poolside/laguna-s-2.1:free、stealth/missingno）、40 セッション（答えたもの 39、比較に入ったターン 198）の記録から分かったこと。前の回は同じ場面・同じモデルで、新しい合図の定義で数え直した（ターン 199）。
+Five free models, 40 sessions. 39 sessions answered. The raw count of turns in answered sessions is 205 before the wording change and 203 after it. The before/after rates use only scene-and-model pairs present in both runs: 199 turns before, 198 after. The record names a missing credit line `omitted_credit`.
 
-- プラグインを迂回した（bypass）: 119 件（59.8%）→ 56 件（28.3%）
-- 道具の選び違い（呼ばずに答える、missing_tool）: 8 件（4.0%）→ 4 件（2.0%）
-- 出典を伝えていない（omitted_attribution）: 6 件（3.0%）→ 6 件（3.0%）
-- 引数の断られ（invalid_argument）: 7 件（3.5%）→ 8 件（4.0%）
-- 最後まで通せなかった（argument_stuck）: 2 件（1.0%）→ 3 件（1.5%）
+- bypass: 119/199 (59.8%) → 56/198 (28.3%). Those 56 are also 56/203 (27.6%) of the raw after total.
+- missing_tool: 8/199 (4.0%) → 4/198 (2.0%)
+- omitted_credit: 6/199 (3.0%) → 6/198 (3.0%)
+- invalid_argument: 7/199 (3.5%) → 8/198 (4.0%)
+- argument_stuck: 2/199 (1.0%) → 3/198 (1.5%)
 
-変えたこと: 道具の最初の文に、何を返すか・いつ使うか・検索は読み取りだけかを書いた。`bad_args` に `field`・`problem`・`expected`・`allowed_fields` を足し、利用者の入力値と上流の文は載せない。成功の検索に `source.retrieved_at`・`source.url`・`source.as_of` を必ず返す。skill に、その欄を一緒に伝えること、呼んでいないときは取得していないと言うこと、記憶から発言を書かないことを書いた。
+A successful `kokkai_search` returns `source.retrieved_at`, `source.as_of`, `source.attribution`, and `source.url`. `source.url` is the first meeting URL, or `https://kokkai.ndl.go.jp/api.html` when the page has none. Each meeting's own URL is `meetings[].meetingURL`. `kokkai_watch` does not return `source`. `bad_args` includes `field`, `problem`, `expected`, and `allowed_fields`, and does not repeat the caller's value or the upstream sentence. On add, `allowed_fields` is `action`, `any`, `speaker`, `house`, `hour`, `deliver`, and `lookback_days`. It does not include `watch_id`. A query longer than 2000 bytes is refused with those four fields. A missing `hour` is `problem` `missing`. A `speaker` that is not a string is `field` `speaker`. A cron `run` writes seen speech IDs to `state.json`. A manual `run` does not. The skill says to copy each meeting's `meetingURL` with the search source fields, and not to invent `source` for a watch.
 
-流し直して、迂回と呼んでいない答えは減った。出典の件数は 6 のまま（ターンが1つ減ったので割合だけ僅かに上がった）。引数の断られが1件増えた場面は、件数の範囲外の `maximum_records` を同じ値で繰り返したもので、範囲を説明に書いた同じ直しは回していない。監視の仕事は、流し終わったあと本番用の家に残っていない。
+Bypass and answers that never called the tool went down. `omitted_credit` stayed at 6. The extra `invalid_argument` was one session repeating `maximum_records` outside 1 to 30. That wording change was not run again. The cron job created for the session run was not left in that Hermes profile afterward. The skill asks the model not to quote a speech from memory. It does not stop a model from answering without the tool: 56 of the 198 paired turns still bypassed the plugin.

@@ -9,8 +9,9 @@ def register(ctx) -> None:
         "read-meetings",
         _SKILL,
         description=(
-            "List Diet meetings with kokkai_search or kokkai_watch, and pass source.retrieved_at, "
-            "source.url, and source.as_of with any meeting you mention."
+            "List Diet meetings with kokkai_search or kokkai_watch. "
+            "From a search, copy each meeting's meetingURL plus source.retrieved_at, source.as_of, and source.attribution. "
+            "kokkai_watch does not return source."
         ),
     )
     if __package__:
@@ -32,7 +33,8 @@ def register(ctx) -> None:
         schema={
             "name": "kokkai_search",
             "description": (
-                "Returns meeting names, the count, official meeting URLs, and source.retrieved_at, source.url, and source.as_of; "
+                "Returns meeting names, the count, each meeting's meetingURL, and source.retrieved_at, source.as_of, and source.attribution; "
+                "source.url is only the first meeting URL, or the API page when the page has none; "
                 "use it to list Diet meetings; read-only. "
                 "If you did not call this tool, say you did not search and do not quote speech from memory. "
                 "Fetch one summary per Diet meeting and the official meeting URL only when the whole result fits in one page. "
@@ -69,8 +71,10 @@ def register(ctx) -> None:
         schema={
             "name": "kokkai_watch",
             "description": (
-                "Returns the watch list or new meeting URLs, plus source.retrieved_at and source.url; "
-                "use add, remove, list, or run; read-only except add and remove, which ask for approval. "
+                "Returns the watch list or a notice of new speech records. It does not return source. "
+                "list reads saved watches and does not call the meeting API. "
+                "add and remove write the watch file and ask for approval. "
+                "run writes seen speech IDs to state.json when the caller is the cron job, and does not write them on a manual run. "
                 "If you did not call this tool, say you did not fetch meetings. "
                 "Watch Diet meeting metadata. action is add, remove, list, or run. "
                 "Calling the tool with no arguments is the same as action run. "
