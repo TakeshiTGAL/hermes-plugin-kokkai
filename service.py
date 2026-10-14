@@ -43,6 +43,15 @@ CRON_PROMPT = (
 SEARCH_KEYS = {"any", "speaker", "house", "from", "until", "maximum_records"}
 SEARCH_FIELDS = ["any", "speaker", "house", "from", "until", "maximum_records"]
 ADD_KEYS = {"action", "any", "speaker", "house", "hour", "deliver", "lookback_days"}
+WATCH_FIELDS = ["action", "any", "speaker", "house", "hour", "deliver", "lookback_days", "watch_id"]
+_ADD_PROBLEM = {
+    "any": ("any", "not_a_string", "any, speaker, and house are strings"),
+    "criteria": ("any", "missing_criteria", "any or speaker"),
+    "house": ("house", "not_in_set", "衆議院, 参議院, 両院, or 両院協議会"),
+    "hour": ("hour", "out_of_range", "an integer from 0 through 23"),
+    "deliver": ("deliver", "missing", "a deliver target"),
+    "lookback_days": ("lookback_days", "out_of_range", "an integer from 1 to 30"),
+}
 REMOVE_KEYS = {"action", "watch_id"}
 LIST_KEYS = {"action"}
 RUN_KEYS = {"action"}
@@ -317,7 +326,10 @@ def search(deps: Deps, args: dict[str, Any] | None) -> str:
     _bind_clock(deps)
     args = args or {}
     if not isinstance(args, dict):
-        return _fail("bad_args", "Arguments must be an object. Nothing was requested.", "Pass a JSON object.")
+        return _bad_args(
+            "arguments", "not_an_object", "a JSON object",
+            SEARCH_FIELDS, "Pass a JSON object. Nothing was requested.",
+        )
     unknown = _unknown(set(args), SEARCH_KEYS)
     if unknown:
         return _bad_args(
@@ -499,13 +511,16 @@ def watch(deps: Deps, args: dict[str, Any] | None) -> str:
     _bind_clock(deps)
     args = args or {}
     if not isinstance(args, dict):
-        return _fail("bad_args", "Arguments must be an object. Nothing was requested.", "Pass a JSON object.")
+        return _bad_args(
+            "arguments", "not_an_object", "a JSON object",
+            WATCH_FIELDS, "Pass a JSON object. Nothing was requested.", notify=True,
+        )
     if "action" not in args:
         if args:
-            return _fail(
-                "bad_args",
-                _unknown(set(args), set()) or "Arguments are not accepted without an action.",
-                "Pass action run with no other arguments, or name add, remove, or list.",
+            return _bad_args(
+                "action", "missing", "add, remove, list, or run",
+                WATCH_FIELDS, "Pass action run with no other arguments, or name add, remove, or list.",
+                notify=True,
             )
         action = "run"
     else:
@@ -519,11 +534,14 @@ def watch(deps: Deps, args: dict[str, Any] | None) -> str:
     if action == "run":
         unknown = _unknown(set(args), RUN_KEYS)
         if unknown:
-            return _fail("bad_args", unknown, "Call run with no other arguments. Nothing was requested.")
+            return _bad_args(
+                "arguments", "unknown_field", "action run and no other arguments",
+                ["action"], "Call run with no other arguments. Nothing was requested.", notify=True,
+            )
         return _run(deps)
     return _bad_args(
-        "action", "not_in_set", "add, remove, list, or run",
-        ["action", "any", "speaker", "house", "hour", "deliver", "lookback_days", "watch_id"],
+        "action", "not_in_set",         "add, remove, list, or run",
+        WATCH_FIELDS,
         "Use one of those four actions. Nothing was requested.",
         notify=True,
     )
@@ -616,10 +634,17 @@ def _condition(row: dict[str, Any]) -> tuple[str, str, str, int]:
 def _add(deps: Deps, args: dict[str, Any]) -> str:
     unknown = _unknown(set(args), ADD_KEYS)
     if unknown:
-        return _fail("bad_args", unknown, "Remove the extra arguments. Nothing was saved.")
+        return _bad_args(
+            "arguments", "unknown_field", "action, any, speaker, house, hour, deliver, lookback_days",
+            WATCH_FIELDS, "Remove the extra arguments. Nothing was saved.", notify=True,
+        )
     parsed = _add_fields(args)
     if isinstance(parsed, str):
-        return _fail("bad_args", parsed, "Fix the arguments. Nothing was saved.")
+        field, problem, expected = _ADD_PROBLEM[parsed]
+        return _bad_args(
+            field, problem, expected,
+            WATCH_FIELDS, "Fix the arguments. Nothing was saved.", notify=True,
+        )
     status, state, path = _load_state(deps)
     if status == "corrupt":
         return _fail(
@@ -637,8 +662,12 @@ def _add(deps: Deps, args: dict[str, Any]) -> str:
     if deliver is None:
         return _fail(
             "bad_args",
-            "That deliver target is not accepted, so no job was created and the existing job was left as it is.",
-            "Use origin, local, all, bot-chat, bot-chat:<profile>, a platform, platform:chat_id, or a comma combination.",
+            "deliver is not accepted (not_in_set). Expected: origin, local, all, bot-chat, bot-chat:<profile>, a platform, platform:chat_id, or a comma combination.",
+            "Use one of those targets. Nothing was saved.",
+            field="deliver",
+            problem="not_in_set",
+            expected="origin, local, all, bot-chat, bot-chat:<profile>, a platform, platform:chat_id, or a comma combination",
+            allowed_fields=WATCH_FIELDS,
         )
     parsed["deliver"] = deliver
     match = next((row for row in state["watches"] if _condition(row) == _condition(parsed)), None)
@@ -679,7 +708,10 @@ def _add(deps: Deps, args: dict[str, Any]) -> str:
     start, end = _window(day, parsed["lookback_days"])
     pairs = _watch_pairs(parsed, start, end)
     if _query_too_long(pairs):
-        return _fail("bad_args", "The query is longer than 2000 bytes, so it was not sent.", "Shorten the words.")
+        return _bad_args(
+            "query", "too_long", "at most 2000 bytes",
+            WATCH_FIELDS, "Shorten the words. Nothing was sent.", notify=True,
+        )
     try:
         page = client.fetch(pairs, deps.transport)
     except client.ClientError as exc:
@@ -771,28 +803,25 @@ def _add_fields(args: dict[str, Any]) -> dict[str, Any] | str:
     speaker = _text(args.get("speaker", ""))
     house = _text(args.get("house", ""))
     if None in {any_text, speaker, house}:
-        return "any, speaker, and house must be strings."
+        return "any"
     assert any_text is not None and speaker is not None and house is not None
     if any_text == "" and speaker == "":
-        return "A watch needs any or speaker. A from/until range alone is not a watch. Nothing was requested."
+        return "criteria"
     if house != "" and _house(house) is None:
-        return (
-            f"house {house!r} is not one of 衆議院, 参議院, 両院, 両院協議会. "
-            "Nothing was requested."
-        )
+        return "house"
     if "hour" not in args:
-        return "hour is required (0 through 23). Nothing was requested."
+        return "hour"
     hour = _int(args.get("hour"))
     if hour is None or not 0 <= hour <= 23:
-        return "hour must be an integer from 0 through 23. Nothing was requested."
+        return "hour"
     if "deliver" not in args or not isinstance(args.get("deliver"), str) or not args.get("deliver").strip():
-        return "deliver is required. Nothing was requested."
+        return "deliver"
     lookback = args.get("lookback_days", LOOKBACK_DEFAULT)
     if "lookback_days" not in args:
         lookback = LOOKBACK_DEFAULT
     days = _int(lookback)
     if days is None or not 1 <= days <= 30:
-        return "lookback_days must be an integer from 1 to 30. Nothing was requested."
+        return "lookback_days"
     return {
         "any": any_text,
         "speaker": speaker,
@@ -925,13 +954,15 @@ def _retarget(deps: Deps, state: dict[str, Any], path: Path, parsed: dict[str, A
 def _remove(deps: Deps, args: dict[str, Any]) -> str:
     unknown = _unknown(set(args), REMOVE_KEYS)
     if unknown:
-        return _fail("bad_args", unknown, "Pass only action and watch_id. Nothing was changed.")
+        return _bad_args(
+            "arguments", "unknown_field", "action and watch_id",
+            ["action", "watch_id"], "Pass only action and watch_id. Nothing was changed.", notify=True,
+        )
     watch_id = args.get("watch_id")
     if not isinstance(watch_id, str) or not WATCH_ID.fullmatch(watch_id):
-        return _fail(
-            "bad_args",
-            "watch_id must be 32 lowercase hex characters. Nothing was requested.",
-            "Use an id from list.",
+        return _bad_args(
+            "watch_id", "not_a_watch_id", "32 lowercase hex characters",
+            ["action", "watch_id"], "Use an id from list. Nothing was requested.", notify=True,
         )
     status, state, path = _load_state(deps)
     if status == "corrupt":
@@ -1018,7 +1049,10 @@ def _remove(deps: Deps, args: dict[str, Any]) -> str:
 def _list(deps: Deps, args: dict[str, Any]) -> str:
     unknown = _unknown(set(args), LIST_KEYS)
     if unknown:
-        return _fail("bad_args", unknown, "Call list with no other arguments.")
+        return _bad_args(
+            "arguments", "unknown_field", "action list and no other arguments",
+            ["action"], "Call list with no other arguments.", notify=True,
+        )
     status, state, _path = _load_state(deps)
     if status == "corrupt":
         return _fail(
