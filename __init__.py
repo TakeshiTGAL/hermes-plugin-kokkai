@@ -1,7 +1,18 @@
 """Diet meeting metadata for Hermes. Speech text is not requested or returned."""
+from pathlib import Path
+
+_SKILL = Path(__file__).resolve().parent / "skills" / "read-meetings" / "SKILL.md"
 
 
 def register(ctx) -> None:
+    ctx.register_skill(
+        "read-meetings",
+        _SKILL,
+        description=(
+            "List Diet meetings with kokkai_search or kokkai_watch, and pass source.retrieved_at, "
+            "source.url, and source.as_of with any meeting you mention."
+        ),
+    )
     if __package__:
         from .service import TOOLSET, search, watch
         from .service import Deps
@@ -21,6 +32,9 @@ def register(ctx) -> None:
         schema={
             "name": "kokkai_search",
             "description": (
+                "Returns meeting names, the count, official meeting URLs, and source.retrieved_at, source.url, and source.as_of; "
+                "use it to list Diet meetings; read-only. "
+                "If you did not call this tool, say you did not search and do not quote speech from memory. "
                 "Fetch one summary per Diet meeting and the official meeting URL only when the whole result fits in one page. "
                 "The count and the credit line come first. Speech rows are not returned. "
                 "If numberOfRecords is greater than the page, the call fails and returns no meetings. "
@@ -55,6 +69,9 @@ def register(ctx) -> None:
         schema={
             "name": "kokkai_watch",
             "description": (
+                "Returns the watch list or new meeting URLs, plus source.retrieved_at and source.url; "
+                "use add, remove, list, or run; read-only except add and remove, which ask for approval. "
+                "If you did not call this tool, say you did not fetch meetings. "
                 "Watch Diet meeting metadata. action is add, remove, list, or run. "
                 "Calling the tool with no arguments is the same as action run. "
                 "Any other argument without an action is rejected. "

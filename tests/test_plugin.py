@@ -222,10 +222,11 @@ def test_illegal_house_and_inverted_dates_send_nothing(tmp_path):
     dates = body(service.search(deps, {"from": "2020-12-31", "until": "2020-01-01"}))
     assert transport.calls == []
     assert house["ok"] is False
-    assert "下院" in house["message"]
-    assert service.INVERTED_MEASURED in dates["message"]
-    assert dates["message"].count("(0) (19014)") == 1
-    assert "日付" not in dates["message"]
+    assert house["field"] == "house" and house["problem"] == "not_in_set"
+    assert "下院" not in json.dumps(house, ensure_ascii=False)
+    assert dates["problem"] == "inverted"
+    assert service.INVERTED_MEASURED not in dates["message"]
+    assert "2020-12-31" not in json.dumps(dates, ensure_ascii=False)
 
 
 def test_zero_is_success_and_cites_api_html(tmp_path):
@@ -236,6 +237,9 @@ def test_zero_is_success_and_cites_api_html(tmp_path):
     assert result["message"].startswith("0 meetings")
     assert "変化なし" not in result["message"]
     assert ZERO_CITE in result["message"]
+    assert result["source"]["retrieved_at"].endswith("Z")
+    assert result["source"]["url"]
+    assert result["source"]["as_of"]
 
 
 def test_zero_without_start_record_is_not_success(tmp_path):

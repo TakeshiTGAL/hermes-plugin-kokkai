@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 API_BASE = "https://kokkai.ndl.go.jp"
 MEETING_LIST_PATH = "/api/meeting_list"
-USER_AGENT = "jp-kokkai/0.1.0"
+USER_AGENT = "jp-kokkai/0.1.1"
 TIMEOUT_SECONDS = 30
 BODY_CAP = 2_000_000
 GAP_SECONDS = 5.0

@@ -94,6 +94,10 @@ Not checked:
 
 The API terms that were read are section 4 of https://kokkai.ndl.go.jp/api.html . The credit line follows section 1.1 of PDL 1.0, https://www.digital.go.jp/resources/open_data/public_data_license_v1.0 .
 
+## どう確かめているか
+
+試験台（`ship/harness/run.py`）と機械点検（`ship/preship_check.py`）を、直したあとも通しています。オフラインのテストは、差し込んだ通信で、Python 3.11、3.12、3.14 の3つで走らせます。それに加えて、Nous の無料のモデルに同じ場面を流し、合図の前後を比べます。会議を伝えるときは `source.retrieved_at`、`source.url`、`source.as_of` を一緒に出します。道具を呼んでいないときは、取得していないと言い、記憶から発言を書きません。
+
 ## Requirements
 
 `requires_hermes` is `>=0.21.4`. `manifest_version` is 2. `python_dependencies` is empty. The license is MIT. There is no NOTICE file. When `__package__` is empty, imports are flat. No hooks are registered. Private Hermes modules (`cron.jobs`, `tools.approval`, `tools.approval_context`, the write guard, and `plugin_data_dir`) fail closed when they cannot be loaded. This repository ships `tests/test_plugin.py`. Hermes does not load that file. It is not a tool, and a watch does not run it.

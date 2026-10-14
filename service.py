@@ -6,7 +6,7 @@ import json
 import os
 import re
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable
 from zoneinfo import ZoneInfo
@@ -41,6 +41,7 @@ CRON_PROMPT = (
     "A model may still add words; that limit is not enforceable here."
 )
 SEARCH_KEYS = {"any", "speaker", "house", "from", "until", "maximum_records"}
+SEARCH_FIELDS = ["any", "speaker", "house", "from", "until", "maximum_records"]
 ADD_KEYS = {"action", "any", "speaker", "house", "hour", "deliver", "lookback_days"}
 REMOVE_KEYS = {"action", "watch_id"}
 LIST_KEYS = {"action"}
@@ -89,6 +90,20 @@ def dumps(body: dict[str, Any], *, ordered: bool = False) -> str:
     return json.dumps(body, ensure_ascii=False, sort_keys=not ordered)
 
 
+def _bad_args(field: str, problem: str, expected: str, allowed: list[str], next_step: str, *, notify: bool = False) -> str:
+    """断る値は表の field / problem / expected / allowed_fields。入力の値と上流の文は載せない。"""
+    return _fail(
+        "bad_args",
+        f"{field} is not accepted ({problem}). Expected: {expected}.",
+        next_step,
+        notify=notify,
+        field=field,
+        problem=problem,
+        expected=expected,
+        allowed_fields=list(allowed),
+    )
+
+
 def _fail(code: str, message: str, next_step: str, *, notify: bool = True, **extra: Any) -> str:
     # message stays first. sort_keys would hide it behind a large body.
     body: dict[str, Any] = {"message": message, "ok": False, "error": code, "next_step": next_step, "notify": notify}
@@ -124,6 +139,16 @@ def attribution(urls: list[str], day: date) -> str:
 
 def _with_attribution(english: str, urls: list[str], day: date) -> str:
     return english + "\n" + attribution(urls, day)
+
+
+def _source(day: date, urls: list[str] | None = None) -> dict[str, str]:
+    page = urls[0] if urls else API_HTML
+    return {
+        "attribution": attribution(urls or [], day),
+        "retrieved_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "url": page,
+        "as_of": day.isoformat(),
+    }
 
 
 def _commands(deps: Deps) -> list[str]:
@@ -295,10 +320,15 @@ def search(deps: Deps, args: dict[str, Any] | None) -> str:
         return _fail("bad_args", "Arguments must be an object. Nothing was requested.", "Pass a JSON object.")
     unknown = _unknown(set(args), SEARCH_KEYS)
     if unknown:
-        return _fail("bad_args", unknown, "Remove the extra arguments and try again.", notify=False)
+        return _bad_args(
+            "arguments", "unknown_field", "any, speaker, house, from, until, maximum_records",
+            SEARCH_FIELDS, "Remove the extra arguments and try again.",
+        )
     built = _search_query(args)
-    if isinstance(built, str):
-        return _fail("bad_args", built, "Fix the arguments. Nothing was requested.", notify=False)
+    if isinstance(built, dict):
+        return _bad_args(
+            built["field"], built["problem"], built["expected"], built["allowed_fields"], built["next_step"],
+        )
     day = _today(deps)
     if day is None:
         return _fail(
@@ -319,11 +349,13 @@ def search(deps: Deps, args: dict[str, Any] | None) -> str:
         page = client.fetch(pairs, deps.transport)
     except client.ClientError as exc:
         return _fail(exc.code, exc.message, exc.next_step, notify=False)
+    urls = _meeting_urls(page)
     return _ok(
-        _with_attribution(_search_english(page), _meeting_urls(page), day),
+        _with_attribution(_search_english(page), urls, day),
         notify=False,
         meeting_count=page["number_of_records"],
         meetings=_meeting_summaries(page["meetings"]),
+        source=_source(day, urls),
     )
 
 
@@ -384,34 +416,72 @@ def _search_query(args: dict[str, Any]) -> str | tuple[list[tuple[str, str]], di
     start = _text(args.get("from", ""))
     end = _text(args.get("until", ""))
     if None in {any_text, speaker, house, start, end}:
-        return "any, speaker, house, from, and until must be strings."
+        return {
+            "field": "arguments",
+            "problem": "not_a_string",
+            "expected": "any, speaker, house, from, and until as strings",
+            "allowed_fields": SEARCH_FIELDS,
+            "next_step": "Pass those fields as strings. Nothing was requested.",
+        }
     assert any_text is not None and speaker is not None and house is not None and start is not None and end is not None
     if house != "" and _house(house) is None:
-        return (
-            f"house {house!r} is not one of 衆議院, 参議院, 両院, 両院協議会. "
-            "An unknown house is ignored by the API and would look like a search with no house, "
-            "so nothing was requested."
-        )
+        return {
+            "field": "house",
+            "problem": "not_in_set",
+            "expected": "衆議院, 参議院, 両院, or 両院協議会",
+            "allowed_fields": SEARCH_FIELDS,
+            "next_step": (
+                "An unknown house is ignored by the API and would look like a search with no house, "
+                "so nothing was requested."
+            ),
+        }
     if (start == "") != (end == ""):
-        return "from and until must be given together. Nothing was requested."
+        return {
+            "field": "from",
+            "problem": "not_a_pair",
+            "expected": "from and until together, both YYYY-MM-DD",
+            "allowed_fields": SEARCH_FIELDS,
+            "next_step": "Pass both dates or neither. Nothing was requested.",
+        }
     if start and end:
         start_day = _parse_date(start)
         end_day = _parse_date(end)
         if start_day is None or end_day is None:
-            return "from and until must be YYYY-MM-DD. Nothing was requested."
+            return {
+                "field": "from",
+                "problem": "not_a_date",
+                "expected": "YYYY-MM-DD",
+                "allowed_fields": SEARCH_FIELDS,
+                "next_step": "Pass from and until as YYYY-MM-DD. Nothing was requested.",
+            }
         if start_day > end_day:
-            return (
-                "from is after until, so nothing was requested. "
-                f"The measured API sentence is: {INVERTED_MEASURED}"
-            )
+            return {
+                "field": "from",
+                "problem": "inverted",
+                "expected": "from on or before until, both YYYY-MM-DD",
+                "allowed_fields": SEARCH_FIELDS,
+                "next_step": "Swap the dates. Nothing was requested.",
+            }
     maximum = args.get("maximum_records", SEARCH_DEFAULT)
     if "maximum_records" not in args:
         maximum = SEARCH_DEFAULT
     count = _int(maximum)
     if count is None or not 1 <= count <= 30:
-        return "maximum_records must be an integer from 1 to 30. Nothing was requested."
+        return {
+            "field": "maximum_records",
+            "problem": "out_of_range",
+            "expected": "an integer from 1 to 30",
+            "allowed_fields": SEARCH_FIELDS,
+            "next_step": "Pass maximum_records from 1 to 30. Nothing was requested.",
+        }
     if any_text == "" and speaker == "" and house == "" and start == "":
-        return "A search needs any, speaker, a house, or both from and until. Nothing was requested."
+        return {
+            "field": "arguments",
+            "problem": "missing_criteria",
+            "expected": "any, speaker, a house, or both from and until",
+            "allowed_fields": SEARCH_FIELDS,
+            "next_step": "Add one of those. Nothing was requested.",
+        }
     pairs = _pairs([
         ("any", any_text),
         ("speaker", speaker),
@@ -451,11 +521,11 @@ def watch(deps: Deps, args: dict[str, Any] | None) -> str:
         if unknown:
             return _fail("bad_args", unknown, "Call run with no other arguments. Nothing was requested.")
         return _run(deps)
-    shown = action if isinstance(action, str) else type(action).__name__
-    return _fail(
-        "bad_args",
-        f"action {shown!r} is not one of add, remove, list, or run. Nothing was requested.",
-        "Use one of those four actions.",
+    return _bad_args(
+        "action", "not_in_set", "add, remove, list, or run",
+        ["action", "any", "speaker", "house", "hour", "deliver", "lookback_days", "watch_id"],
+        "Use one of those four actions. Nothing was requested.",
+        notify=True,
     )
 
 
