@@ -1,19 +1,21 @@
 """Diet meeting metadata for Hermes. Speech text is not requested or returned."""
+import logging
 from pathlib import Path
 
+logger = logging.getLogger(__name__)
+
 _SKILL = Path(__file__).resolve().parent / "skills" / "read-meetings" / "SKILL.md"
+_SKILL_DESCRIPTION = (
+    "Diet meeting metadata from kokkai_search and kokkai_watch. "
+    "A search result includes each meeting's meetingURL, source.retrieved_at, source.as_of, and source.attribution. "
+    "source.url is the first meeting URL, or the API page when that page has no meeting URL. "
+    "kokkai_watch does not return source."
+)
+# Hermes filters <available_skills> from this argument, not from the SKILL.md file.
+_SKILL_FRONTMATTER = {"metadata": {"hermes": {"requires_toolsets": ["jp_kokkai"]}}}
 
 
 def register(ctx) -> None:
-    ctx.register_skill(
-        "read-meetings",
-        _SKILL,
-        description=(
-            "List Diet meetings with kokkai_search or kokkai_watch. "
-            "From a search, copy each meeting's meetingURL plus source.retrieved_at, source.as_of, and source.attribution. "
-            "kokkai_watch does not return source."
-        ),
-    )
     if __package__:
         from .service import TOOLSET, search, watch
         from .service import Deps
@@ -106,3 +108,12 @@ def register(ctx) -> None:
         },
         handler=_watch,
     )
+    try:
+        ctx.register_skill(
+            "read-meetings",
+            _SKILL,
+            description=_SKILL_DESCRIPTION,
+            frontmatter=_SKILL_FRONTMATTER,
+        )
+    except Exception:
+        logger.warning("jp-kokkai skill was not registered", exc_info=True)

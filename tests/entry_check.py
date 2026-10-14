@@ -32,8 +32,13 @@ def main() -> None:
     skills: list[dict[str, str]] = []
 
     class Ctx:
-        def register_skill(self, name, path, description=""):
-            skills.append({"name": name, "path": str(path), "description": description})
+        def register_skill(self, name, path, description="", frontmatter=None):
+            skills.append({
+                "name": name,
+                "path": str(path),
+                "description": description,
+                "frontmatter": frontmatter or {},
+            })
 
         def register_tool(self, name, toolset, schema, handler, **kwargs):
             registry.register(name=name, toolset=toolset, schema=schema, handler=handler)
@@ -45,6 +50,16 @@ def main() -> None:
         raise SystemExit("skill description still promises source on every tool")
     if "meetingURL" not in skills[0]["description"]:
         raise SystemExit("skill description does not name meetingURL")
+    if "copy " in skills[0]["description"]:
+        raise SystemExit("skill description is an instruction")
+    toolsets = (
+        skills[0].get("frontmatter", {})
+        .get("metadata", {})
+        .get("hermes", {})
+        .get("requires_toolsets")
+    )
+    if toolsets != ["jp_kokkai"]:
+        raise SystemExit("skill frontmatter missing requires_toolsets")
     skill_text = Path(skills[0]["path"]).read_text(encoding="utf-8")
     if "条文" in skill_text or "does not return `source`" not in skill_text:
         raise SystemExit("skill file does not match the registered text")

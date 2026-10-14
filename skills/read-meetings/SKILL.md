@@ -1,6 +1,10 @@
 ---
 name: read-meetings
-description: List Diet meetings from the National Diet Library. Quote a searched meeting with that meeting's meetingURL and the search source fields. kokkai_watch does not return source.
+description: "Diet meeting metadata from kokkai_search and kokkai_watch. A search result includes each meeting's meetingURL, source.retrieved_at, source.as_of, and source.attribution. source.url is the first meeting URL, or the API page when that page has no meeting URL. kokkai_watch does not return source."
+metadata:
+  hermes:
+    requires_toolsets:
+      - jp_kokkai
 ---
 
 When you mention a meeting from `kokkai_search`, copy that meeting's `meetingURL` from `meetings`, plus `source.retrieved_at`, `source.as_of`, and `source.attribution`. `source.url` is only the first meeting URL, or `https://kokkai.ndl.go.jp/api.html` when the page has no meeting URL. Do not use `source.url` as the URL of every meeting.

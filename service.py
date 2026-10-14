@@ -311,6 +311,13 @@ def _pairs(fields: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return [(key, value) for key, value in fields if value != ""]
 
 
+def _long_argument(any_text: str, speaker: str) -> str:
+    """Name the caller argument that contributes more UTF-8 bytes. Both are real arguments."""
+    if len(speaker.encode("utf-8")) > len(any_text.encode("utf-8")):
+        return "speaker"
+    return "any"
+
+
 def _query_too_long(pairs: list[tuple[str, str]]) -> bool:
     encoded = urllib_query(pairs)
     return len(encoded.encode("utf-8")) > QUERY_LIMIT
@@ -711,7 +718,7 @@ def _add(deps: Deps, args: dict[str, Any]) -> str:
     pairs = _watch_pairs(parsed, start, end)
     if _query_too_long(pairs):
         return _bad_args(
-            "query", "too_long", "at most 2000 bytes",
+            _long_argument(parsed["any"], parsed["speaker"]), "too_long", "at most 2000 bytes",
             ADD_FIELDS, "Shorten the words. Nothing was sent.", notify=True,
         )
     try:
