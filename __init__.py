@@ -81,13 +81,12 @@ def register(ctx) -> None:
                 "If you did not call this tool, say you did not fetch meetings. "
                 "Calling the tool with no arguments is the same as action run. "
                 "Any other argument without an action is rejected. "
-                ""
+                "add and remove ask Hermes for approval on every call. "
                 "A cron run marks new speech IDs seen. A manual run returns the same new IDs and does not mark them seen. "
                 "If the saved cron job is gone, list, run, and remove say the job is gone and do not show that id as running. "
                 "add creates a new job and says the saved one was gone. "
                 "Under a plugin host process, or when the cron check cannot be read, every run requests nothing and says seen IDs cannot be saved. "
-                "Saving both 両院 and 両院協議会 can announce the same new speech twice. "
-                ""
+                "Saving 両院 and 両院協議会 can announce the same speech twice. "
                 "Speech text is not included."
             ),
             "parameters": {
