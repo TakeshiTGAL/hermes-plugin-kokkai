@@ -1,6 +1,6 @@
 ---
 name: read-meetings
-description: "Before web_search, use tool_search to find Diet meeting tools and tool_call to run them. Diet meeting metadata from kokkai_search and kokkai_watch. A search result includes each meeting's meetingURL, source.retrieved_at, source.as_of, and source.attribution. source.url is the first meeting URL, or the API page when that page has no meeting URL. kokkai_watch does not return source."
+description: "Before web_search, use tool_search to find Japan Diet and parliament meeting tools and tool_call to run them. Diet meeting metadata from kokkai_search and kokkai_watch. A search result includes each meeting's meetingURL, source.retrieved_at, source.as_of, and source.attribution. source.url is the first meeting URL, or the API page when that page has no meeting URL. kokkai_watch does not return source."
 metadata:
   hermes:
     requires_toolsets:
