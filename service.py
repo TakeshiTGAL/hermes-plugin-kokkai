@@ -5,6 +5,7 @@ import inspect
 import json
 import os
 import re
+import unicodedata
 import uuid
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -41,6 +42,16 @@ CRON_PROMPT = (
     "A model may still add words; that limit is not enforceable here."
 )
 SEARCH_KEYS = {"any", "speaker", "house", "from", "until", "maximum_records"}
+SEARCH_ALIAS = {
+    "dateFrom": "from",
+    "date_from": "from",
+    "start_date": "from",
+    "dateTo": "until",
+    "date_to": "until",
+    "end_date": "until",
+    "nameOfHouse": "house",
+    "house_name": "house",
+}
 SEARCH_FIELDS = ["any", "speaker", "house", "from", "until", "maximum_records"]
 ADD_FIELDS = ["action", "any", "speaker", "house", "hour", "deliver", "lookback_days"]
 ADD_KEYS = set(ADD_FIELDS)
@@ -119,7 +130,14 @@ def _bad_args(field: str, problem: str, expected: str, allowed: list[str], next_
 
 def _fail(code: str, message: str, next_step: str, *, notify: bool = True, **extra: Any) -> str:
     # message stays first. sort_keys would hide it behind a large body.
-    body: dict[str, Any] = {"message": message, "ok": False, "error": code, "next_step": next_step, "notify": notify}
+    body: dict[str, Any] = {
+        "message": message,
+        "ok": False,
+        "error": code,
+        "error_type": code,
+        "next_step": next_step,
+        "notify": notify,
+    }
     body.update(extra)
     return dumps(body, ordered=True)
 
@@ -276,9 +294,30 @@ def _text(value: Any) -> str | None:
 
 
 def _int(value: Any) -> int | None:
-    if isinstance(value, bool) or not isinstance(value, int):
+    """An int, an integral float, or a digit string. Bool is not an int."""
+    if isinstance(value, bool):
         return None
-    return value
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str):
+        text = unicodedata.normalize("NFKC", value).strip()
+        if re.fullmatch(r"-?\d+", text):
+            return int(text)
+    return None
+
+
+def _apply_search_alias(args: dict[str, Any]) -> dict[str, Any]:
+    """Copy known upstream names onto from, until, and house, then drop the alias."""
+    out = dict(args)
+    for src, dst in SEARCH_ALIAS.items():
+        if src not in out:
+            continue
+        if dst not in out:
+            out[dst] = out[src]
+        del out[src]
+    return out
 
 
 def _unknown(keys: set[str], allowed: set[str]) -> str | None:
@@ -291,10 +330,11 @@ def _unknown(keys: set[str], allowed: set[str]) -> str | None:
 
 
 def _parse_date(value: str) -> date | None:
-    if not DATE_TEXT.fullmatch(value):
+    text = unicodedata.normalize("NFKC", value).strip().replace("/", "-").replace(".", "-")
+    if not DATE_TEXT.fullmatch(text):
         return None
     try:
-        return datetime.strptime(value, "%Y-%m-%d").date()
+        return datetime.strptime(text, "%Y-%m-%d").date()
     except ValueError:
         return None
 
@@ -341,6 +381,7 @@ def search(deps: Deps, args: dict[str, Any] | None) -> str:
             "arguments", "not_an_object", "a JSON object",
             SEARCH_FIELDS, "Pass a JSON object. Nothing was requested.",
         )
+    args = _apply_search_alias(args)
     unknown = _unknown(set(args), SEARCH_KEYS)
     if unknown:
         return _bad_args(
@@ -445,6 +486,7 @@ def _search_query(args: dict[str, Any]) -> str | tuple[list[tuple[str, str]], di
             "next_step": "Pass those fields as strings. Nothing was requested.",
         }
     assert any_text is not None and speaker is not None and house is not None and start is not None and end is not None
+    house = unicodedata.normalize("NFKC", house).strip()
     if house != "" and _house(house) is None:
         return {
             "field": "house",
@@ -483,6 +525,8 @@ def _search_query(args: dict[str, Any]) -> str | tuple[list[tuple[str, str]], di
                 "allowed_fields": SEARCH_FIELDS,
                 "next_step": "Swap the dates. Nothing was requested.",
             }
+        start = start_day.isoformat()
+        end = end_day.isoformat()
     maximum = args.get("maximum_records", SEARCH_DEFAULT)
     if "maximum_records" not in args:
         maximum = SEARCH_DEFAULT
@@ -493,7 +537,7 @@ def _search_query(args: dict[str, Any]) -> str | tuple[list[tuple[str, str]], di
             "problem": "out_of_range",
             "expected": "an integer from 1 to 30",
             "allowed_fields": SEARCH_FIELDS,
-            "next_step": "Pass maximum_records from 1 to 30. Nothing was requested.",
+            "next_step": "Pass maximum_records as an integer from 1 to 30, for example 10. Nothing was requested.",
         }
     if any_text == "" and speaker == "" and house == "" and start == "":
         return {
@@ -501,7 +545,7 @@ def _search_query(args: dict[str, Any]) -> str | tuple[list[tuple[str, str]], di
             "problem": "missing_criteria",
             "expected": "any, speaker, a house, or both from and until",
             "allowed_fields": SEARCH_FIELDS,
-            "next_step": "Add one of those. Nothing was requested.",
+            "next_step": "Add any, speaker, a house, or both from and until. For example any is 予算 and from is 2024-06-03. Nothing was requested.",
         }
     pairs = _pairs([
         ("any", any_text),

@@ -18,3 +18,5 @@ A successful `kokkai_search` returns `source.retrieved_at`, `source.as_of`, `sou
 `missing_tool` went from 20 hits in 205 turns to 4 hits in 203 turns. `omitted_credit` stayed at 6 hits. `bypass` is counted only in the later run: 56 hits in 203 turns.
 
 Tool Search の一覧に出る最初の1文を、頼むときの語にした。仕組みの文から始まると検索されず本体の web_search に寄るため。
+
+関門4: 整数の小数・全角数字・日付の区切り・dateFrom などの別名は受け、範囲外と未知の引数は直し方と例で断り、入力値は文に入れない。
