@@ -24,3 +24,5 @@ A successful `kokkai_search` returns `source.retrieved_at`, `source.as_of`, `sou
 Tool Search の一覧に出る最初の1文を、頼むときの語にした。仕組みの文から始まると検索されず本体の web_search に寄るため。
 
 関門4: 整数の小数・全角数字・日付の区切り・dateFrom などの別名は受け、範囲外と未知の引数は直し方と例で断り、入力値は文に入れない。
+
+関門2: 見張りの説明に、毎日の通知であることと cronjob_manage ではないことを書き、院の英語名と議会の別名を足した。
