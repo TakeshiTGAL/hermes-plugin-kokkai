@@ -50,7 +50,8 @@ def register(ctx) -> None:
                 "house must be 衆議院, 参議院, 両院, or 両院協議会. "
                 "from and until must be passed together as YYYY-MM-DD. "
                 "any keeps spaces and is an AND search. speaker keeps spaces and is an OR search. "
-                "This tool does not ask for approval and does not mark speech IDs seen."
+                "This tool does not ask for approval and does not mark speech IDs seen. "
+                "A speaker may be a minister in a debate."
             ),
             "parameters": {
                 "type": "object",
