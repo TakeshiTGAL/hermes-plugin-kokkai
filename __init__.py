@@ -6,6 +6,7 @@ logger = logging.getLogger(__name__)
 
 _SKILL = Path(__file__).resolve().parent / "skills" / "read-meetings" / "SKILL.md"
 _SKILL_DESCRIPTION = (
+    "Before web_search, use tool_search to find Diet meeting tools and tool_call to run them. "
     "Diet meeting metadata from kokkai_search and kokkai_watch. "
     "A search result includes each meeting's meetingURL, source.retrieved_at, source.as_of, and source.attribution. "
     "source.url is the first meeting URL, or the API page when that page has no meeting URL. "
@@ -35,9 +36,9 @@ def register(ctx) -> None:
         schema={
             "name": "kokkai_search",
             "description": (
-                "Returns meeting names, the count, each meeting's meetingURL, and source.retrieved_at, source.as_of, and source.attribution; "
-                "source.url is only the first meeting URL, or the API page when the page has none; "
-                "use it to list Diet meetings; read-only. "
+                "Japan Diet meetings: list hearings and their URLs. "
+                "source.url is only the first meeting URL, or the API page when the page has none. "
+                "Read-only. "
                 "If you did not call this tool, say you did not search and do not quote speech from memory. "
                 "Fetch one summary per Diet meeting and the official meeting URL only when the whole result fits in one page. "
                 "The count and the credit line come first. Speech rows are not returned. "
@@ -73,22 +74,20 @@ def register(ctx) -> None:
         schema={
             "name": "kokkai_watch",
             "description": (
-                "Returns the watch list or a notice of new speech records. It does not return source. "
+                "Japan Diet watch: new meetings for one saved query. It does not return source. "
                 "list reads saved watches and does not call the meeting API. "
                 "add and remove write the watch file and ask for approval. "
                 "run writes seen speech IDs to state.json when the caller is the cron job, and does not write them on a manual run. "
                 "If you did not call this tool, say you did not fetch meetings. "
-                "Watch Diet meeting metadata. action is add, remove, list, or run. "
                 "Calling the tool with no arguments is the same as action run. "
                 "Any other argument without an action is rejected. "
-                "add and remove ask Hermes for approval on every call. "
+                ""
                 "A cron run marks new speech IDs seen. A manual run returns the same new IDs and does not mark them seen. "
                 "If the saved cron job is gone, list, run, and remove say the job is gone and do not show that id as running. "
                 "add creates a new job and says the saved one was gone. "
                 "Under a plugin host process, or when the cron check cannot be read, every run requests nothing and says seen IDs cannot be saved. "
-                "That notice is sent every time and is not held for 23 hours. "
                 "Saving both 両院 and 両院協議会 can announce the same new speech twice. "
-                "Unknown actions and extra arguments are rejected before any request. "
+                ""
                 "Speech text is not included."
             ),
             "parameters": {
