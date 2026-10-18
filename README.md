@@ -2,13 +2,15 @@
 
 Posts new Diet meeting hits as metadata and the official meeting URL, built on the National Diet Library Diet Proceedings Search System API (kokkai.ndl.go.jp).
 
-The product name is jp-kokkai. The toolset is `jp_kokkai`. The tools are `kokkai_search` and `kokkai_watch`. There is no slash command and no CLI. Speech text is not requested, returned, stored, or logged.
+The product name is jp-kokkai. The toolset is `jp_kokkai`. The tools are `kokkai_search`, `kokkai_speech`, and `kokkai_watch`. There is no slash command and no CLI. `kokkai_search` does not return speech text. `kokkai_speech` requests it and returns a short excerpt. Speech text is not stored or logged.
 
-Hermes turns this plugin's tools on for every surface, including gateways, until you turn a surface off with `hermes tools`. No user list: anyone you allow on your gateway can search, add a watch, and approve it. If a room allowlist is empty, a guest in that room can call these tools too.
+Hermes turns this plugin's tools on for every surface, including gateways, until you turn a surface off with `hermes tools`. No user list: anyone you allow on your gateway can search, read a speech excerpt, add a watch, and approve it. If a room allowlist is empty, a guest in that room can call these tools too.
 
 ## Tools
 
 `kokkai_search` sends one HTTPS GET to `https://kokkai.ndl.go.jp` at path `/api/meeting_list`. It returns one summary per meeting, and the official `meetingURL`, only when `numberOfRecords` equals `numberOfReturn` and that count is the whole page. A summary has the house, the meeting name, the date, the meeting URL, the issue, the session, the speech count, and up to 30 speaker names. It does not return every speech row. The message, including the meeting count and the credit line, is the first field of the result. A successful search also returns `source.retrieved_at`, `source.as_of`, `source.attribution`, and `source.url`. `source.url` is the first meeting's `meetingURL`, or `https://kokkai.ndl.go.jp/api.html` when that page has no meeting URL. Name a meeting with that meeting's `meetingURL`, not with `source.url` alone. If the total is larger than the page, the call fails, returns no meetings, and does not say 0 meetings. Narrow the query until one response can hold it. It does not ask for approval and it does not mark speech IDs seen. `maximum_records` is an integer from 1 to 30 and defaults to 10.
+
+`kokkai_speech` sends one HTTPS GET to `https://kokkai.ndl.go.jp` at path `/api/speech`. It needs `speaker` or `any`. `from` and `until` are optional and must be passed together. It returns at most 10 speeches (the default is 5). The message starts with the total `numberOfRecords`, how many rows are shown, and `truncated` or `not truncated`. Each excerpt is at most 240 characters. A longer speech ends the excerpt with `…` and sets `excerpt_truncated`. The row also has the speaker, the meeting name, the date, and `speechURL`. The credit line uses those speech URLs. `source.url` is the first speech URL, or `https://kokkai.ndl.go.jp/api.html` when the page has none. A total larger than the page is still a success: the total is stated and `truncated` is set. The speech text is not written to `plugin-data`. The same 5-second gap covers this call and `kokkai_search`.
 
 `kokkai_watch` takes `add`, `remove`, `list`, or `run`. Calling it with no arguments is the same as `run`. Any other argument without an action is rejected. Unknown actions and arguments the action does not accept are rejected before a request. It does not return `source`. `list` reads the saved watches and does not call the meeting API. `add` and `remove` write `<HERMES_HOME>/plugin-data/jp-kokkai/state.json` and ask for approval. A cron `run` writes seen speech IDs into that file. A manual `run` does not.
 
@@ -66,7 +68,7 @@ Every successful search, watch add that fetched a page, and watch run appends on
 
 When the response has meetings, the `https://kokkai.ndl.go.jp/api.html` URL is replaced by the `meetingURL` values, joined with `、`. A watch notice of new speech records uses only the URLs of meetings that contain a new speech. The list is this plugin's selection, not an unedited library feed. `kokkai_watch` does not add a `source` object. The credit line, when a fetch happened, stays in `message`.
 
-Speech text is not fetched. Section 4 of the API terms says copyright in National Diet Library staff speeches and in the database itself stays with the National Diet Library, and copyright in other speeches stays with the speaker. This plugin does not quote speech text. Whether a use needs permission is for you to check. 発言本文は取得しない。APIの利用条件の4は、国立国会図書館の職員の発言とデータベース自体の著作権は国立国会図書館にあり、その他の発言の著作権は発言者にある、と書いている。このプラグインは引用しない。許諾が要るかは利用者が確認する。
+`kokkai_speech` fetches speech text and returns an excerpt. Section 4 of the API terms says copyright in National Diet Library staff speeches and in the database itself stays with the National Diet Library, and copyright in other speeches stays with the speaker. Whether a use needs permission is for you to check. `kokkai_speech` は発言の抜粋を返す。APIの利用条件の4は、国立国会図書館の職員の発言とデータベース自体の著作権は国立国会図書館にあり、その他の発言の著作権は発言者にある、と書いている。許諾が要るかは利用者が確認する。
 
 The API page says: 「APIの利用には、手続き等は必要ありません。」 https://kokkai.ndl.go.jp/api.html
 
@@ -87,7 +89,7 @@ On 2026-10-08 the meeting-list shapes were checked from outside this plugin, at 
 Not checked:
 
 - Delivery into a real chat, a gateway with a person admitted, or whether a model relays `message` unchanged.
-- Whether an individual speech would fall under a copyright exception. This plugin does not handle speech text.
+- Whether an individual speech would fall under a copyright exception. `kokkai_speech` returns an excerpt and does not decide that.
 - The imperial-diet proceedings system. It is a different system and is not called.
 - A trademark-only page. The ban that was read is section ２（1） of https://www.ndl.go.jp/jp/sitepolicy/terms.html (updated 2025-03-01), which says a third party may not use the library's symbols, logos, or character designs. Not finding a separate trademark page is not permission to use them. This plugin does not use them.
 - Every open pull-request title. Those search responses are not stored in this repository.

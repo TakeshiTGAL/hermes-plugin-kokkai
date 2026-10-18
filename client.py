@@ -1,9 +1,10 @@
-"""HTTPS GET client for the Diet proceedings meeting list.
+"""HTTPS GET client for the Diet proceedings meeting list and speech search.
 
-The only network call is GET {API_BASE}/api/meeting_list. API_BASE is a module
-attribute so a test harness can point it at a local server. Callers cannot
-pass a host. Redirects are not followed. One request is in flight at a time,
-and the next send waits until 5 seconds after the previous response.
+The network calls are GET {API_BASE}/api/meeting_list and GET {API_BASE}/api/speech.
+API_BASE is a module attribute so a test harness can point it at a local server.
+Callers cannot pass a host. Redirects are not followed. One request is in flight
+at a time, and the next send waits until 5 seconds after the previous response.
+The gap is shared by both paths.
 """
 from __future__ import annotations
 
@@ -17,7 +18,8 @@ from typing import Any, Callable
 
 API_BASE = "https://kokkai.ndl.go.jp"
 MEETING_LIST_PATH = "/api/meeting_list"
-USER_AGENT = "jp-kokkai/0.1.1"
+SPEECH_PATH = "/api/speech"
+USER_AGENT = "jp-kokkai/0.1.2"
 TIMEOUT_SECONDS = 30
 BODY_CAP = 2_000_000
 GAP_SECONDS = 5.0
@@ -74,7 +76,9 @@ def _begin() -> None:
             raise ClientError(
                 "too_soon",
                 "The previous response was less than 5 seconds ago, so this request was not sent.",
-                "Wait at least 5 seconds after a response. The gap cannot be set shorter. Nothing was saved.",
+                "Wait at least 5 seconds after a response, then send one request. "
+                "Do not send a second request in the same turn. "
+                "The gap cannot be set shorter. Nothing was saved.",
             )
         _busy = True
 
@@ -105,9 +109,9 @@ def _origin() -> str:
     return f"{parsed.scheme}://{host}"
 
 
-def build_url(pairs: list[tuple[str, str]]) -> str:
+def build_url(pairs: list[tuple[str, str]], path: str = MEETING_LIST_PATH) -> str:
     query = urllib.parse.urlencode(pairs, quote_via=urllib.parse.quote)
-    return f"{_origin()}{MEETING_LIST_PATH}?{query}" if query else f"{_origin()}{MEETING_LIST_PATH}"
+    return f"{_origin()}{path}?{query}" if query else f"{_origin()}{path}"
 
 
 def _urllib_transport(url: str) -> tuple[int, bytes]:
@@ -128,13 +132,28 @@ def _urllib_transport(url: str) -> tuple[int, bytes]:
 
 
 def fetch(pairs: list[tuple[str, str]], transport: Callable[[str], tuple[int, bytes]] | None = None) -> dict[str, Any]:
-    """Send one GET. Raises ClientError before a send when the flight gate refuses."""
-    url = build_url(pairs)
+    """Send one meeting-list GET. Raises ClientError before a send when the flight gate refuses."""
+    return _get(MEETING_LIST_PATH, pairs, transport, "meeting list", _page)
+
+
+def fetch_speech(pairs: list[tuple[str, str]], transport: Callable[[str], tuple[int, bytes]] | None = None) -> dict[str, Any]:
+    """Send one speech-search GET. The 5-second gap is the same lock as the meeting list."""
+    return _get(SPEECH_PATH, pairs, transport, "speech search", _speech_page)
+
+
+def _get(
+    path: str,
+    pairs: list[tuple[str, str]],
+    transport: Callable[[str], tuple[int, bytes]] | None,
+    kind: str,
+    parse_page: Callable[[dict[str, Any], str], dict[str, Any]],
+) -> dict[str, Any]:
+    url = build_url(pairs, path)
     parsed = urllib.parse.urlsplit(url)
-    if parsed.path != MEETING_LIST_PATH:
+    if parsed.path != path:
         raise ClientError(
             "bad_path",
-            "Only /api/meeting_list is requested, so this call was not sent.",
+            f"Only {path} is requested, so this call was not sent.",
             "Nothing was saved.",
         )
     _begin()
@@ -145,7 +164,7 @@ def fetch(pairs: list[tuple[str, str]], transport: Callable[[str], tuple[int, by
         except (TimeoutError, TimeoutError) as exc:
             raise ClientError(
                 "timeout",
-                "The request timed out, so the meetings were not fetched. Saved state is unchanged.",
+                f"The request timed out, so the {kind} was not fetched. Saved state is unchanged.",
                 "Try again later. This plugin does not retry in the same call.",
             ) from exc
         except ClientError:
@@ -154,26 +173,32 @@ def fetch(pairs: list[tuple[str, str]], transport: Callable[[str], tuple[int, by
             if isinstance(exc, (TimeoutError, OSError)) and "timed out" in str(exc).lower():
                 raise ClientError(
                     "timeout",
-                    "The request timed out, so the meetings were not fetched. Saved state is unchanged.",
+                    f"The request timed out, so the {kind} was not fetched. Saved state is unchanged.",
                     "Try again later. This plugin does not retry in the same call.",
                 ) from exc
             raise ClientError(
                 "network",
-                "The meeting list could not be fetched. Saved state is unchanged.",
+                f"The {kind} could not be fetched. Saved state is unchanged.",
                 "Try again later. This plugin does not retry in the same call.",
             ) from exc
-        return _parse(status, body, url)
+        return _parse(status, body, url, kind, parse_page)
     finally:
         if sent:
             _end()
 
 
-def _parse(status: int, body: bytes, url: str) -> dict[str, Any]:
+def _parse(
+    status: int,
+    body: bytes,
+    url: str,
+    kind: str,
+    parse_page: Callable[[dict[str, Any], str], dict[str, Any]],
+) -> dict[str, Any]:
     if status in REDIRECTS:
         raise ClientError(
             "redirect",
             f"The server returned HTTP {status} and the redirect was not followed. Nothing was saved.",
-            "The https meeting list URL is the only one this plugin requests.",
+            f"The https {kind} URL is the only one this plugin requests.",
             status=status,
         )
     if len(body) > BODY_CAP:
@@ -188,21 +213,21 @@ def _parse(status: int, body: bytes, url: str) -> dict[str, Any]:
         extra = _format_api_error(message, details)
         raise ClientError(
             f"http_{status}",
-            f"The meeting list returned HTTP {status}. Do not read this as an empty meeting list. Nothing was saved.{extra}",
+            f"The {kind} returned HTTP {status}. Do not read this as an empty result. Nothing was saved.{extra}",
             "Change the query and try again. Seen speech IDs were not changed.",
             status=status,
         )
     if status != 200:
         raise ClientError(
             f"http_{status}",
-            f"The meeting list returned HTTP {status}. Do not read this as an empty meeting list. Nothing was saved.",
+            f"The {kind} returned HTTP {status}. Do not read this as an empty result. Nothing was saved.",
             "Try again later. Seen speech IDs were not changed.",
             status=status,
         )
     if not body or not body.strip():
         raise ClientError(
             "bad_body",
-            "The meeting list returned an empty body. Do not read this as an empty meeting list. Nothing was saved.",
+            f"The {kind} returned an empty body. Do not read this as an empty result. Nothing was saved.",
             "Try again later. Seen speech IDs were not changed.",
             status=status,
         )
@@ -211,14 +236,14 @@ def _parse(status: int, body: bytes, url: str) -> dict[str, Any]:
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ClientError(
             "bad_body",
-            "The meeting list body was not JSON. The HTTP status was 200. Do not read this as an empty meeting list. Nothing was saved.",
+            f"The {kind} body was not JSON. The HTTP status was 200. Do not read this as an empty result. Nothing was saved.",
             "Try again later. Seen speech IDs were not changed.",
             status=status,
         ) from exc
     if not isinstance(payload, dict):
         raise ClientError(
             "bad_body",
-            "The meeting list JSON was not an object. Do not read this as an empty meeting list. Nothing was saved.",
+            f"The {kind} JSON was not an object. Do not read this as an empty result. Nothing was saved.",
             "Try again later. Seen speech IDs were not changed.",
             status=status,
         )
@@ -226,11 +251,11 @@ def _parse(status: int, body: bytes, url: str) -> dict[str, Any]:
         extra = _format_api_error(payload.get("message"), payload.get("details"))
         raise ClientError(
             "message",
-            f"The meeting list returned an error message. Do not read this as an empty meeting list. Nothing was saved.{extra}",
+            f"The {kind} returned an error message. Do not read this as an empty result. Nothing was saved.{extra}",
             "Change the query and try again. Seen speech IDs were not changed.",
             status=status,
         )
-    return _page(payload, url)
+    return parse_page(payload, url)
 
 
 def _error_fields(body: bytes) -> tuple[Any, Any]:
@@ -263,7 +288,7 @@ def _page(payload: dict[str, Any], url: str) -> dict[str, Any]:
     if isinstance(records, bool) or not isinstance(records, int) or isinstance(returned, bool) or not isinstance(returned, int):
         raise ClientError(
             "bad_body",
-            "The meeting list did not include integer record counts. Nothing was saved.",
+            "The response did not include integer record counts. Nothing was saved.",
             "Seen speech IDs were not changed.",
         )
     has_array = "meetingRecord" in payload
@@ -293,9 +318,9 @@ def _page(payload: dict[str, Any], url: str) -> dict[str, Any]:
             (
                 f"The meeting list count does not match one complete page "
                 f"(numberOfRecords {records}, numberOfReturn {returned}). "
-                "Nothing was saved, and this is not an empty meeting list."
+                "Nothing was saved. This is not 0 meetings."
             ),
-            "Narrow the query so one response can hold it. Seen speech IDs were not changed.",
+            "This is not 0 meetings. Narrow the query so one response can hold it. Seen speech IDs were not changed.",
         )
     if records != returned or len(meetings) != returned or records > returned:
         raise ClientError(
@@ -303,9 +328,9 @@ def _page(payload: dict[str, Any], url: str) -> dict[str, Any]:
             (
                 f"The meeting list does not fit in one response "
                 f"(numberOfRecords {records}, numberOfReturn {returned}, meetings {len(meetings)}). "
-                "Nothing was saved."
+                "Nothing was saved. This is not 0 meetings."
             ),
-            "Narrow the query. Seen speech IDs were not changed. The next page is not requested.",
+            "This is not 0 meetings. Narrow the query. Seen speech IDs were not changed. The next page is not requested.",
         )
     parsed, speech_ids, missing = _meetings(meetings)
     return {
@@ -369,3 +394,74 @@ def _meetings(meetings: list[Any]) -> tuple[list[dict[str, Any]], list[str], boo
             }
         )
     return parsed, speech_ids, missing
+
+
+def _speech_page(payload: dict[str, Any], url: str) -> dict[str, Any]:
+    """One speech page. A larger total than this page is a truncated success, not an empty result."""
+    records = payload.get("numberOfRecords")
+    returned = payload.get("numberOfReturn")
+    if isinstance(records, bool) or not isinstance(records, int) or isinstance(returned, bool) or not isinstance(returned, int):
+        raise ClientError(
+            "bad_body",
+            "The speech search did not include integer record counts. Nothing was saved.",
+            "Seen speech IDs were not changed.",
+        )
+    has_array = "speechRecord" in payload
+    speeches = payload.get("speechRecord")
+    empty_list = isinstance(speeches, list) and len(speeches) == 0
+    zero_shape = (
+        records == 0
+        and returned == 0
+        and (not has_array or empty_list)
+        and payload.get("nextRecordPosition") is None
+        and payload.get("startRecord") == 1
+    )
+    if zero_shape:
+        return {
+            "url": url,
+            "zero": True,
+            "number_of_records": 0,
+            "number_of_return": 0,
+            "speeches": [],
+            "page_truncated": False,
+        }
+    if records < 1 or returned < 1 or not isinstance(speeches, list) or len(speeches) != returned or records < returned:
+        raise ClientError(
+            "partial",
+            (
+                f"The speech search count does not match the returned rows "
+                f"(numberOfRecords {records}, numberOfReturn {returned}). "
+                "Nothing was saved. This is not 0 speeches."
+            ),
+            "This is not 0 speeches. Narrow the query. Nothing was saved.",
+        )
+    parsed: list[dict[str, Any]] = []
+    for speech in speeches:
+        if not isinstance(speech, dict):
+            raise ClientError(
+                "bad_body",
+                "A speech record was not an object. Nothing was saved.",
+                "Do not invent a quote. Nothing was saved.",
+            )
+        text = speech.get("speech")
+        speaker = speech.get("speaker")
+        meeting = speech.get("nameOfMeeting")
+        spoken_on = speech.get("date")
+        speech_url = speech.get("speechURL")
+        parsed.append(
+            {
+                "speaker": speaker if isinstance(speaker, str) else None,
+                "nameOfMeeting": meeting if isinstance(meeting, str) else None,
+                "date": spoken_on if isinstance(spoken_on, str) else None,
+                "speechURL": speech_url if isinstance(speech_url, str) and speech_url else None,
+                "speech": text if isinstance(text, str) else None,
+            }
+        )
+    return {
+        "url": url,
+        "zero": False,
+        "number_of_records": records,
+        "number_of_return": returned,
+        "speeches": parsed,
+        "page_truncated": records > returned,
+    }

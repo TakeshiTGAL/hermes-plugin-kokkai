@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.2
+
+`kokkai_speech` returns a short excerpt, the speaker, the meeting name, the date, and the speech URL from `/api/speech`.
+
 ## 0.1.0
 
 Reads a meeting list (metadata and the official meeting URL) from the Diet proceedings search API. `kokkai_watch` creates one job that runs once a day. Speech text is not requested.

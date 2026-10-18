@@ -1395,7 +1395,7 @@ def test_skill_failure_still_registers_both_tools():
             raise RuntimeError("skill failed")
 
     mod.register(Ctx())
-    assert names == ["kokkai_search", "kokkai_watch"]
+    assert names == ["kokkai_search", "kokkai_speech", "kokkai_watch"]
 
 
 def test_skill_registers_after_tools_with_toolset():
@@ -1413,7 +1413,7 @@ def test_skill_registers_after_tools_with_toolset():
             seen["frontmatter"] = frontmatter
 
     mod.register(Ctx())
-    assert order == ["kokkai_search", "kokkai_watch", "skill"]
+    assert order == ["kokkai_search", "kokkai_speech", "kokkai_watch", "skill"]
     assert "copy " not in seen["description"]
     assert seen["frontmatter"] == {"metadata": {"hermes": {"requires_toolsets": ["jp_kokkai"]}}}
     text = Path(mod._SKILL).read_text(encoding="utf-8")

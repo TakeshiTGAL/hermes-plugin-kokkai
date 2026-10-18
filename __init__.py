@@ -1,4 +1,4 @@
-"""Diet meeting metadata for Hermes. Speech text is not requested or returned."""
+"""Diet meeting metadata and speech excerpts for Hermes. Speech text is not stored."""
 import logging
 from pathlib import Path
 
@@ -8,6 +8,7 @@ _SKILL = Path(__file__).resolve().parent / "skills" / "read-meetings" / "SKILL.m
 _SKILL_DESCRIPTION = (
     "Before web_search, use tool_search to find Japan Diet and parliament meeting tools and tool_call to run them. "
     "Diet meeting metadata from kokkai_search and kokkai_watch. "
+    "Who said what, with a quote, comes from kokkai_speech. "
     "A search result includes each meeting's meetingURL, source.retrieved_at, source.as_of, and source.attribution. "
     "source.url is the first meeting URL, or the API page when that page has no meeting URL. "
     "kokkai_watch does not return source."
@@ -18,14 +19,17 @@ _SKILL_FRONTMATTER = {"metadata": {"hermes": {"requires_toolsets": ["jp_kokkai"]
 
 def register(ctx) -> None:
     if __package__:
-        from .service import TOOLSET, search, watch
+        from .service import TOOLSET, search, speech, watch
         from .service import Deps
     else:
-        from service import TOOLSET, search, watch
+        from service import TOOLSET, search, speech, watch
         from service import Deps
 
     def _search(args, **_kwargs):
         return search(Deps(), args or {})
+
+    def _speech(args, **_kwargs):
+        return speech(Deps(), args or {})
 
     def _watch(args, **_kwargs):
         return watch(Deps(), args or {})
@@ -67,6 +71,43 @@ def register(ctx) -> None:
             },
         },
         handler=_search,
+    )
+    ctx.register_tool(
+        name="kokkai_speech",
+        toolset=TOOLSET,
+        schema={
+            "name": "kokkai_speech",
+            "description": (
+                "Japan Diet speeches: who said what, with quotes. "
+                "kokkai_speech returns an excerpt, the speaker, the meeting name, the date, and the speech URL. "
+                "The total count and the truncated mark come first. "
+                "An excerpt is at most 240 characters, and at most 10 speeches are shown. "
+                "source.url is only the first speech URL, or the API page when the page has none. "
+                "Read speechURL on each speech. "
+                "If you did not call this tool, say you did not search and do not quote a speech from memory. "
+                "A minister, a committee remark, or what someone said uses this tool. "
+                "kokkai_search lists meetings and does not return speech text. "
+                "speaker keeps spaces and is an OR search. any keeps spaces and is an AND search. "
+                "Pass speaker or any. from and until must be passed together as YYYY-MM-DD. "
+                "house must be 衆議院, 参議院, 両院, or 両院協議会. "
+                "maximum_records is 1 to 10 and defaults to 5. "
+                "The next request waits 5 seconds. Speech text is not stored. "
+                "Copyright in a speech stays with the speaker, except National Diet Library staff speeches."
+            ),
+            "parameters": {
+                "type": "object",
+                "additionalProperties": False,
+                "properties": {
+                    "any": {"type": "string", "description": "Space-separated words. All words are required. Spaces are kept."},
+                    "speaker": {"type": "string", "description": "Space-separated names. Any name may match. Spaces are kept."},
+                    "house": {"type": "string", "description": "衆議院, 参議院, 両院, or 両院協議会."},
+                    "from": {"type": "string", "description": "Start date YYYY-MM-DD. Required together with until."},
+                    "until": {"type": "string", "description": "End date YYYY-MM-DD. Required together with from."},
+                    "maximum_records": {"type": "integer", "description": "1 to 10. Default 5."},
+                },
+            },
+        },
+        handler=_speech,
     )
     ctx.register_tool(
         name="kokkai_watch",

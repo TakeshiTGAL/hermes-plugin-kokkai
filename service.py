@@ -27,6 +27,9 @@ QUERY_LIMIT = 2000
 MAX_WATCHES = 3
 LOOKBACK_DEFAULT = 30
 SEARCH_DEFAULT = 10
+SPEECH_DEFAULT = 5
+SPEECH_MAX = 10
+EXCERPT_CHARS = 240
 # A daily cron can fire a little early. Exactly 24 hours would stay silent on day 2.
 NOTIFY_GAP = 23 * 60 * 60
 SPEAKER_CAP = 30
@@ -386,7 +389,8 @@ def search(deps: Deps, args: dict[str, Any] | None) -> str:
     if unknown:
         return _bad_args(
             "arguments", "unknown_field", "any, speaker, house, from, until, maximum_records",
-            SEARCH_FIELDS, "Remove the extra arguments and try again.",
+            SEARCH_FIELDS,
+            unknown + " Example: house 衆議院, from 2024-06-03, until 2024-06-03.",
         )
     built = _search_query(args)
     if isinstance(built, dict):
@@ -410,7 +414,15 @@ def search(deps: Deps, args: dict[str, Any] | None) -> str:
     try:
         page = client.fetch(pairs, deps.transport)
     except client.ClientError as exc:
-        return _fail(exc.code, exc.message, exc.next_step, notify=False)
+        step = exc.next_step
+        if exc.code == "partial":
+            step = (
+                "This is not 0 meetings. If numberOfRecords is 30 or less, set maximum_records "
+                "to that count (the default is 10, and 30 is the maximum). "
+                "If it is larger, shorten from and until. Wait 5 seconds before the next call. "
+                "Seen speech IDs were not changed."
+            )
+        return _fail(exc.code, exc.message, step, notify=False)
     urls = _meeting_urls(page)
     return _ok(
         _with_attribution(_search_english(page), urls, day),
@@ -419,6 +431,193 @@ def search(deps: Deps, args: dict[str, Any] | None) -> str:
         meetings=_meeting_summaries(page["meetings"]),
         source=_source(day, urls),
     )
+
+
+def speech(deps: Deps, args: dict[str, Any] | None) -> str:
+    """Read speech excerpts. The text is not written to plugin-data."""
+    _bind_clock(deps)
+    args = args or {}
+    if not isinstance(args, dict):
+        return _bad_args(
+            "arguments", "not_an_object", "a JSON object",
+            SEARCH_FIELDS, "Pass a JSON object. Nothing was requested.",
+        )
+    args = _apply_search_alias(args)
+    unknown = _unknown(set(args), SEARCH_KEYS)
+    if unknown:
+        return _bad_args(
+            "arguments", "unknown_field", "any, speaker, house, from, until, maximum_records",
+            SEARCH_FIELDS,
+            unknown + " Example: speaker 岸田文雄, any 予算.",
+        )
+    built = _speech_query(args)
+    if isinstance(built, dict):
+        return _bad_args(
+            built["field"], built["problem"], built["expected"], built["allowed_fields"], built["next_step"],
+        )
+    day = _today(deps)
+    if day is None:
+        return _fail(
+            "timezone",
+            "Asia/Tokyo could not be resolved, so the speech search was not requested.",
+            "Nothing was saved.",
+            notify=False,
+        )
+    pairs, _meta = built
+    if _query_too_long(pairs):
+        return _bad_args(
+            "arguments", "too_long", "at most 2000 bytes",
+            SEARCH_FIELDS, "Shorten the words and try again.",
+        )
+    try:
+        page = client.fetch_speech(pairs, deps.transport)
+    except client.ClientError as exc:
+        return _fail(exc.code, exc.message, exc.next_step, notify=False)
+    rows, urls, truncated, missing = _speech_rows(page)
+    return _ok(
+        _with_attribution(_speech_english(page, len(rows), truncated, missing), urls, day),
+        notify=False,
+        speech_count=page["number_of_records"],
+        shown=len(rows),
+        truncated=truncated,
+        speeches=rows,
+        source=_source(day, urls),
+    )
+
+
+def _speech_query(args: dict[str, Any]) -> dict[str, Any] | tuple[list[tuple[str, str]], dict[str, Any]]:
+    any_text = _text(args.get("any", ""))
+    speaker = _text(args.get("speaker", ""))
+    house = _text(args.get("house", ""))
+    start = _text(args.get("from", ""))
+    end = _text(args.get("until", ""))
+    if None in {any_text, speaker, house, start, end}:
+        return {
+            "field": "arguments",
+            "problem": "not_a_string",
+            "expected": "any, speaker, house, from, and until as strings",
+            "allowed_fields": SEARCH_FIELDS,
+            "next_step": "Pass those fields as strings. Example: speaker 岸田文雄, any 予算. Nothing was requested.",
+        }
+    assert any_text is not None and speaker is not None and house is not None and start is not None and end is not None
+    house = unicodedata.normalize("NFKC", house).strip()
+    if house != "" and _house(house) is None:
+        return {
+            "field": "house",
+            "problem": "not_in_set",
+            "expected": "衆議院, 参議院, 両院, or 両院協議会",
+            "allowed_fields": SEARCH_FIELDS,
+            "next_step": "Pass one of those houses, or omit house. Nothing was requested.",
+        }
+    if (start == "") != (end == ""):
+        return {
+            "field": "from",
+            "problem": "not_a_pair",
+            "expected": "from and until together, both YYYY-MM-DD",
+            "allowed_fields": SEARCH_FIELDS,
+            "next_step": "Pass both dates or neither. Example: from 2024-01-01, until 2024-03-31. Nothing was requested.",
+        }
+    if start and end:
+        start_day = _parse_date(start)
+        end_day = _parse_date(end)
+        if start_day is None or end_day is None:
+            return {
+                "field": "from",
+                "problem": "not_a_date",
+                "expected": "YYYY-MM-DD",
+                "allowed_fields": SEARCH_FIELDS,
+                "next_step": "Pass from and until as YYYY-MM-DD. Nothing was requested.",
+            }
+        if start_day > end_day:
+            return {
+                "field": "from",
+                "problem": "inverted",
+                "expected": "from on or before until, both YYYY-MM-DD",
+                "allowed_fields": SEARCH_FIELDS,
+                "next_step": "Swap the dates. Nothing was requested.",
+            }
+        start = start_day.isoformat()
+        end = end_day.isoformat()
+    maximum = args.get("maximum_records", SPEECH_DEFAULT)
+    if "maximum_records" not in args:
+        maximum = SPEECH_DEFAULT
+    count = _int(maximum)
+    if count is None or not 1 <= count <= SPEECH_MAX:
+        return {
+            "field": "maximum_records",
+            "problem": "out_of_range",
+            "expected": "an integer from 1 to 10",
+            "allowed_fields": SEARCH_FIELDS,
+            "next_step": "Pass maximum_records as an integer from 1 to 10, for example 5. Nothing was requested.",
+        }
+    if any_text == "" and speaker == "":
+        return {
+            "field": "arguments",
+            "problem": "missing_criteria",
+            "expected": "speaker or any",
+            "allowed_fields": SEARCH_FIELDS,
+            "next_step": "Pass speaker or any. Example: speaker 岸田文雄, any 予算. Nothing was requested.",
+        }
+    pairs = _pairs([
+        ("any", any_text),
+        ("speaker", speaker),
+        ("nameOfHouse", house),
+        ("from", start),
+        ("until", end),
+        ("maximumRecords", str(count)),
+        ("recordPacking", "json"),
+        ("startRecord", "1"),
+    ])
+    return pairs, {"maximum_records": count}
+
+
+def _excerpt(text: str) -> tuple[str, bool]:
+    if len(text) <= EXCERPT_CHARS:
+        return text, False
+    return text[:EXCERPT_CHARS] + "…", True
+
+
+def _speech_rows(page: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str], bool, int]:
+    rows: list[dict[str, Any]] = []
+    urls: list[str] = []
+    truncated = bool(page.get("page_truncated"))
+    missing = 0
+    for speech in page["speeches"]:
+        text = speech.get("speech")
+        if isinstance(text, str) and text:
+            excerpt, cut = _excerpt(text)
+            truncated = truncated or cut
+        else:
+            excerpt, cut = "", False
+            missing += 1
+            truncated = True
+        url = speech.get("speechURL")
+        if isinstance(url, str) and url and url not in urls:
+            urls.append(url)
+        rows.append(
+            {
+                "speaker": speech.get("speaker"),
+                "nameOfMeeting": speech.get("nameOfMeeting"),
+                "date": speech.get("date"),
+                "speechURL": url,
+                "excerpt": excerpt,
+                "excerpt_truncated": cut or not isinstance(text, str) or text == "",
+            }
+        )
+    return rows, urls, truncated, missing
+
+
+def _speech_english(page: dict[str, Any], shown: int, truncated: bool, missing: int) -> str:
+    mark = "truncated" if truncated else "not truncated"
+    english = (
+        f"{page['number_of_records']} speeches in total. Showing {shown}. {mark}. "
+        f"Each excerpt is at most {EXCERPT_CHARS} characters."
+    )
+    if missing == 1:
+        english += " 1 row had no speech text. Do not invent a quote for it."
+    elif missing:
+        english += f" {missing} rows had no speech text. Do not invent a quote for them."
+    return english
 
 
 def _meeting_summaries(meetings: list[Any]) -> list[dict[str, Any]]:
@@ -589,7 +788,7 @@ def watch(deps: Deps, args: dict[str, Any] | None) -> str:
         if unknown:
             return _bad_args(
                 "arguments", "unknown_field", "action run and no other arguments",
-                ["action"], "Call run with no other arguments. Nothing was requested.", notify=True,
+                ["action"], unknown + " Call run with no other arguments.", notify=True,
             )
         return _run(deps)
     return _bad_args(
@@ -689,14 +888,20 @@ def _add(deps: Deps, args: dict[str, Any]) -> str:
     if unknown:
         return _bad_args(
             "arguments", "unknown_field", "action, any, speaker, house, hour, deliver, lookback_days",
-            ADD_FIELDS, "Remove the extra arguments. Nothing was saved.", notify=True,
+            ADD_FIELDS,
+            unknown + " Example: action add, any 予算, hour 9, deliver local.",
+            notify=True,
         )
     parsed = _add_fields(args)
     if isinstance(parsed, str):
         field, problem, expected = _ADD_PROBLEM[parsed]
+        if parsed == "criteria":
+            step = "Pass any or speaker. Example: any 予算, hour 9, deliver local. Nothing was saved."
+        else:
+            step = "Fix the arguments. Nothing was saved."
         return _bad_args(
             field, problem, expected,
-            ADD_FIELDS, "Fix the arguments. Nothing was saved.", notify=True,
+            ADD_FIELDS, step, notify=True,
         )
     status, state, path = _load_state(deps)
     if status == "corrupt":
@@ -748,7 +953,13 @@ def _add(deps: Deps, args: dict[str, Any]) -> str:
     text = _approval_add(parsed, state, presence)
     approved, reason = _approve(deps, "add", text)
     if not approved:
-        return _fail("approval", reason, "Nothing was requested and no job was changed.", requested=False)
+        return _fail(
+            "approval",
+            reason,
+            "Run add from an attended session. hermes -q, cron, yolo, and approvals off cannot approve it. "
+            "Nothing was requested and no job was changed.",
+            requested=False,
+        )
     if match is not None:
         return _retarget(deps, state, path, parsed)
     day = _today(deps)
@@ -1012,7 +1223,7 @@ def _remove(deps: Deps, args: dict[str, Any]) -> str:
     if unknown:
         return _bad_args(
             "arguments", "unknown_field", "action and watch_id",
-            ["action", "watch_id"], "Pass only action and watch_id. Nothing was changed.", notify=True,
+            ["action", "watch_id"], unknown + " Pass only action and watch_id.", notify=True,
         )
     watch_id = args.get("watch_id")
     if not isinstance(watch_id, str) or not WATCH_ID.fullmatch(watch_id):
@@ -1031,7 +1242,11 @@ def _remove(deps: Deps, args: dict[str, Any]) -> str:
         return _fail("storage", "The plugin data directory is not available, so nothing was removed.", "Nothing was requested.")
     row = next((item for item in state["watches"] if item.get("id") == watch_id), None)
     if row is None:
-        return _fail("not_found", "That watch id is not saved. Nothing was requested.", "Use an id from list.")
+        return _fail(
+            "not_found",
+            "That watch id is not saved. Nothing was requested.",
+            "Call kokkai_watch with action list, then pass a watch_id from that list. Nothing was requested.",
+        )
     others = [item for item in state["watches"] if item.get("id") != watch_id]
     last = not others
     presence = _job_presence(deps, state.get("job_id"))
@@ -1045,7 +1260,12 @@ def _remove(deps: Deps, args: dict[str, Any]) -> str:
     text = _approval_remove(row, state, presence, last)
     approved, reason = _approve(deps, "remove", text)
     if not approved:
-        return _fail("approval", reason, "The watch was not removed and no job was changed.")
+        return _fail(
+            "approval",
+            reason,
+            "Run remove from an attended session. hermes -q, cron, yolo, and approvals off cannot approve it. "
+            "The watch was not removed and no job was changed.",
+        )
     presence = _job_presence(deps, state.get("job_id"))
     if presence == "unreadable":
         return _fail(
@@ -1107,7 +1327,7 @@ def _list(deps: Deps, args: dict[str, Any]) -> str:
     if unknown:
         return _bad_args(
             "arguments", "unknown_field", "action list and no other arguments",
-            ["action"], "Call list with no other arguments.", notify=True,
+            ["action"], unknown + " Call list with no other arguments.", notify=True,
         )
     status, state, _path = _load_state(deps)
     if status == "corrupt":
