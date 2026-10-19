@@ -1415,10 +1415,9 @@ def test_skill_registers_after_tools_with_toolset():
     mod.register(Ctx())
     assert order == ["kokkai_search", "kokkai_speech", "kokkai_watch", "skill"]
     assert "copy " not in seen["description"]
-    assert seen["frontmatter"] == {"metadata": {"hermes": {"requires_toolsets": ["jp_kokkai"]}}}
+    assert seen["frontmatter"] is None
     text = Path(mod._SKILL).read_text(encoding="utf-8")
-    assert "requires_toolsets:" in text
-    assert "jp_kokkai" in text
+    assert "requires_toolsets:" not in text
 
 
 def test_watch_query_too_long_names_the_argument(tmp_path):

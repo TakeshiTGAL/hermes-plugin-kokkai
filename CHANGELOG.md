@@ -1,5 +1,7 @@
 # Changelog
 
+Tool Search の既定では本の道具が隠れるため、skill の requires_toolsets を外してモデルの skill 一覧に残す。
+
 ## 0.1.2
 
 `kokkai_speech` returns a short excerpt, the speaker, the meeting name, the date, and the speech URL from `/api/speech`.

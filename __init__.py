@@ -13,8 +13,6 @@ _SKILL_DESCRIPTION = (
     "source.url is the first meeting URL, or the API page when that page has no meeting URL. "
     "kokkai_watch does not return source."
 )
-# Hermes filters <available_skills> from this argument, not from the SKILL.md file.
-_SKILL_FRONTMATTER = {"metadata": {"hermes": {"requires_toolsets": ["jp_kokkai"]}}}
 
 
 def register(ctx) -> None:
@@ -151,7 +149,6 @@ def register(ctx) -> None:
             "read-meetings",
             _SKILL,
             description=_SKILL_DESCRIPTION,
-            frontmatter=_SKILL_FRONTMATTER,
         )
     except Exception:
         logger.warning("jp-kokkai skill was not registered", exc_info=True)

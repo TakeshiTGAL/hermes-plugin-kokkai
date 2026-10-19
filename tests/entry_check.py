@@ -52,15 +52,11 @@ def main() -> None:
         raise SystemExit("skill description does not name meetingURL")
     if "copy " in skills[0]["description"]:
         raise SystemExit("skill description is an instruction")
-    toolsets = (
-        skills[0].get("frontmatter", {})
-        .get("metadata", {})
-        .get("hermes", {})
-        .get("requires_toolsets")
-    )
-    if toolsets != ["jp_kokkai"]:
-        raise SystemExit("skill frontmatter missing requires_toolsets")
+    if skills[0].get("frontmatter"):
+        raise SystemExit("skill frontmatter must be empty")
     skill_text = Path(skills[0]["path"]).read_text(encoding="utf-8")
+    if "requires_toolsets" in skill_text:
+        raise SystemExit("skill file still requires a toolset")
     if "条文" in skill_text or "does not return `source`" not in skill_text:
         raise SystemExit("skill file does not match the registered text")
 
